@@ -1,0 +1,123 @@
+{
+  "name": "ccshell-client",
+  "productName": "CC Shell",
+  "version": "0.1.1",
+  "private": true,
+  "description": "CC Shell 桌面客户端",
+  "author": "CC Shell",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
+  },
+  "devDependencies": {
+    "@ai-sdk/anthropic": "^3.0.103",
+    "@ai-sdk/openai-compatible": "^2.0.72",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fontsource/noto-sans-sc": "^5.3.1",
+    "@fontsource/noto-serif-sc": "^5.3.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "24.10.4",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "6.0.5",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "@xterm/xterm": "^6.0.0",
+    "ai": "^6.0.116",
+    "electron": "45.2.2",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "6.0.0-beta.1",
+    "lucide-react": "^0.545.0",
+    "mammoth": "^1.13.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "shiki": "^3.0.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "5.9.3",
+    "vite": "8.2.2"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11",
+    "node-pty": "^1.1.0",
+    "pdfjs-dist": "^6.5.438"
+  },
+  "build": {
+    "appId": "dev.ccshell.client",
+    "productName": "CC Shell",
+    "copyright": "CC Shell",
+    "directories": {
+      "output": "../.cache/dist",
+      "buildResources": "build"
+    },
+    "electronDist": "node_modules/electron/dist",
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://github.com/"
+      }
+    ],
+    "npmRebuild": false,
+    "electronFuses": {
+      "runAsNode": true,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    },
+    "nodeGypRebuild": false,
+    "files": [
+      "package.json",
+      "out/**",
+      "build/icon-180.png",
+      "build/tray-*.png",
+      "!out/**/*.map",
+      "!node_modules/node-pty/{src,deps,third_party,scripts,typings,binding.gyp,README.md}",
+      "!node_modules/node-pty/prebuilds/{darwin-arm64,darwin-x64,win32-arm64}",
+      "!node_modules/node-pty/**/*.pdb",
+      "!node_modules/pdfjs-dist/{build,web,image_decoders,types}",
+      "!node_modules/pdfjs-dist/legacy/{web,image_decoders}",
+      "!node_modules/**/*.map"
+    ],
+    "asarUnpack": [
+      "out/main/host.js",
+      "out/main/attach.js",
+      "out/main/chunks/**",
+      "node_modules/node-pty/**",
+      "node_modules/pdfjs-dist/**"
+    ],
+    "win": {
+      "target": "dir",
+      "icon": "build/icon.png",
+      "executableName": "CC Shell",
+      "signAndEditExecutable": true
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CC Shell",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "installerLanguages": [
+        "zh_CN"
+      ],
+      "language": "2052",
+      "unicode": true,
+      "include": "build/installer.nsh",
+      "artifactName": "CC-Shell-Setup-${version}.${ext}",
+      "installerHeader": "build/installerHeader.bmp",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/uninstallerSidebar.bmp"
+    }
+  }
+}
