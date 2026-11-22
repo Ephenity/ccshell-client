@@ -4,6 +4,41 @@
 !define MUI_ABORTWARNING
 
 !ifndef BUILD_UNINSTALLER
+  !include FileFunc.nsh
+  !macro preInit
+    ${If} ${isUpdated}
+      StrCpy $R0 $EXEDIR "" -23
+      ${If} $R0 == "\.cache\updater\pending"
+        StrCpy $R1 $EXEDIR -23
+        GetFullPathName $R2 "$R1\.."
+        StrCpy $R3 "$R2\.ccshell-update"
+        Call ccRelaunchFrom
+        ReadEnvStr $R2 "LOCALAPPDATA"
+        StrCpy $R3 "$R2\Temp\.ccshell-update"
+        Call ccRelaunchFrom
+      ${EndIf}
+    ${EndIf}
+  !macroend
+
+  Function ccRelaunchFrom
+    RMDir /r "$R3"
+    ClearErrors
+    CreateDirectory "$R3\tmp"
+    CopyFiles /SILENT "$EXEPATH" "$R3\setup.exe"
+    IfErrors done
+    IfFileExists "$R3\setup.exe" 0 done
+    System::Call 'Kernel32::SetEnvironmentVariable(t "TEMP", t "$R3\tmp")'
+    System::Call 'Kernel32::SetEnvironmentVariable(t "TMP", t "$R3\tmp")'
+    ${GetParameters} $R4
+    ClearErrors
+    Exec '"$R3\setup.exe" $R4'
+    IfErrors done
+    Quit
+    done:
+  FunctionEnd
+!endif
+
+!ifndef BUILD_UNINSTALLER
   !include nsDialogs.nsh
   Var ccDesktopBox
   Var ccDesktopLink

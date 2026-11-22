@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto'
-import { existsSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import { UPDATE_REPO } from '../shared/update'
 import { cacheDir } from './paths'
 import { settings } from './settings'
-import { explainUpdateError, notesToText, UpdateService } from './updater'
+import { cleanInstallerStaging, explainUpdateError, installerStagingDirs, notesToText, UpdateService } from './updater'
 
 type Check = (name: string, pass: boolean, detail?: string) => void
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -71,6 +71,15 @@ export async function updateSelfTest(check: Check): Promise<void> {
   const t = notesToText('<p>修复了 A &amp; C</p><ul><li>新增 B</li></ul><script>x</script>')
   check('更新：发布说明转成纯文本', t.includes('修复了 A & C') && t.includes('• 新增 B') && !t.includes('<'), JSON.stringify(t))
   check('更新：网络错误的说明', explainUpdateError(new Error('net::ERR_CONNECTION_REFUSED')).includes('连不上 GitHub'))
+
+  const dirs = installerStagingDirs()
+  check('更新：安装临时文件夹在程序目录的上一级', dirs[0].endsWith('.ccshell-update') && dirname(dirs[0]) === dirname(dirname(process.execPath)), dirs[0])
+  const fake = join(cacheDir(), 'staging-test', '.ccshell-update')
+  mkdirSync(join(fake, 'tmp'), { recursive: true })
+  writeFileSync(join(fake, 'setup.exe'), 'x')
+  cleanInstallerStaging([fake, join(cacheDir(), 'staging-test', 'missing')])
+  check('更新：清理安装临时文件夹', !existsSync(fake))
+  rmSync(join(cacheDir(), 'staging-test'), { recursive: true, force: true })
 
   delete process.env.CCSHELL_UPDATE_FEED
   const none = new UpdateService(hooks)

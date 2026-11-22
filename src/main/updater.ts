@@ -1,6 +1,6 @@
 import { testEnv } from './testhooks'
 import { EventEmitter } from 'node:events'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { NsisUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
@@ -10,6 +10,24 @@ import { UPDATE_REPO, type UpdateBusy, type UpdateState } from '../shared/update
 import { log } from './log'
 import { cacheDir } from './paths'
 import { settings } from './settings'
+
+const STAGING_CLEAN_MS = 30_000
+export function installerStagingDirs(): string[] {
+  const dirs = [join(dirname(dirname(process.execPath)), '.ccshell-update')]
+  if (process.env.LOCALAPPDATA) dirs.push(join(process.env.LOCALAPPDATA, 'Temp', '.ccshell-update'))
+  return dirs
+}
+export function cleanInstallerStaging(dirs = installerStagingDirs()): void {
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue
+    try {
+      rmSync(dir, { recursive: true, force: true })
+      log('更新', `已清理安装临时文件夹 ${dir}`)
+    } catch (e) {
+      log('更新', `清理安装临时文件夹失败：${(e as Error).message}`)
+    }
+  }
+}
 
 const FIRST_CHECK_MS = 20_000
 const CHECK_EVERY_MS = 4 * 60 * 60_000
@@ -115,7 +133,10 @@ export class UpdateService extends EventEmitter<{ changed: [UpdateState] }> {
     u.forceDevUpdateConfig = !app.isPackaged
     if (app.isPackaged) u.installDirectory = dirname(process.execPath)
     u.logger = {
-      info: () => {},
+      info: (m: unknown) => {
+        const t = String(m)
+        if (/^(Install|Executing|Cannot run installer)/.test(t)) log('更新', t.slice(0, 300))
+      },
       warn: (m: unknown) => log('更新', String(m).slice(0, 300)),
       error: (m: unknown) => log('更新', `出错：${String(m).split('\n')[0].slice(0, 300)}`)
     }
@@ -225,6 +246,7 @@ export class UpdateService extends EventEmitter<{ changed: [UpdateState] }> {
 
   start(): void {
     if (!this.updater) return
+    this.timers.push(setTimeout(() => cleanInstallerStaging(), STAGING_CLEAN_MS))
     const tick = () => {
       if (settings.get().update.auto) void this.check()
     }
