@@ -47,6 +47,7 @@ export async function runSelfTest(mockUrl: string): Promise<number> {
       else if (only === 'terminal') await (await import('./selftest-terminal')).terminalSelfTest(s, mockUrl, check)
       else if (only === 'security') await (await import('./selftest-security')).securitySelfTest(s, check)
       else if (only === 'update') await (await import('./selftest-update')).updateSelfTest(check)
+      else if (only === 'desktop') await (await import('./selftest-desktop')).desktopSelfTest(check)
       else check(`没有这一段：${only}`, false)
       await hostClient().quitHost().catch(() => undefined)
       appendFileSync(out, `\n${failed === 0 ? '全部通过' : `${failed} 项失败`}\n`)
@@ -147,6 +148,7 @@ export async function runSelfTest(mockUrl: string): Promise<number> {
     await stage7fSelfTest(afterLogout, check)
     await (await import('./selftest-security')).securitySelfTest(afterLogout, check)
     await (await import('./selftest-update')).updateSelfTest(check)
+    await (await import('./selftest-desktop')).desktopSelfTest(check)
     await afterLogout.logout()
   } catch (e) {
     check('未预期的异常', false, (e as Error).stack ?? String(e))

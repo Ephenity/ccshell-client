@@ -7,6 +7,7 @@ type Card = Notice & { sound: boolean }
 const LIFETIME: Record<Notice['kind'], number> = { done: 8000, info: 6000, attention: 15000, problem: 15000 }
 const MAX = 3
 const MERGE_MS = 8_000
+const SHIFT_GUARD_MS = 350
 
 let ctx: AudioContext | null = null
 
@@ -67,8 +68,12 @@ export function ToastApp() {
   const box = useRef<HTMLDivElement>(null)
   const timers = useRef(new Map<string, { left: number; started: number; timer: number | null }>())
   const added = useRef(new Map<string, number>())
+  const shiftedAt = useRef(0)
+  const settled = () => Date.now() - shiftedAt.current > SHIFT_GUARD_MS
 
   const remove = (id: string) => {
+    shiftedAt.current = Date.now()
+    setHover((h) => (h === id ? null : h))
     const t = timers.current.get(id)
     if (t?.timer) clearTimeout(t.timer)
     timers.current.delete(id)
@@ -83,6 +88,7 @@ export function ToastApp() {
   useEffect(() => {
     const off = window.ccshell.toast.onAdd((n) => {
       if (n.sound) playSound(n.kind)
+      shiftedAt.current = Date.now()
       setCards((c) => {
         const now = Date.now()
         const merged = c.filter((x) => {
@@ -128,43 +134,45 @@ export function ToastApp() {
   }, [cards])
 
   return (
-    <div ref={box} className="flex flex-col justify-end gap-2 px-4 pt-3 pb-5">
-      {cards.map((c) => {
-        const k = KIND_STYLE[c.kind]
-        const Icon = k.icon
-        return (
-          <div
-            key={c.id}
-            role="button"
-            onMouseEnter={() => setHover(c.id)}
-            onMouseLeave={() => setHover(null)}
-            onClick={() => {
-              window.ccshell.toast.click(c.sessionId)
-              remove(c.id)
-            }}
-            className="toast-in group relative flex cursor-pointer gap-3 rounded-lg border border-border bg-bg-raised p-3.5 pr-8 shadow-[0_4px_12px_rgba(0,0,0,0.16)] hover:border-border-strong"
-          >
-            <Icon size={18} className={'mt-0.5 shrink-0 ' + k.color} />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[13px] font-semibold text-text">{c.title}</div>
-              <div className="mt-0.5 line-clamp-3 text-[12.5px] leading-relaxed whitespace-pre-line text-text-2">{c.body}</div>
-              <div className="mt-1 text-[11px] text-text-3">
-                {k.label} · {new Date(c.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}
-              </div>
-            </div>
-            <button
-              title="关闭"
-              className="absolute top-2 right-2 flex size-6 items-center justify-center rounded-sm text-text-3 hover:bg-surface-2 hover:text-text"
-              onClick={(e) => {
-                e.stopPropagation()
+    <div className="flex h-screen flex-col justify-end overflow-hidden">
+      <div ref={box} className="flex flex-col justify-end gap-2 px-4 pt-3 pb-5">
+        {cards.map((c) => {
+          const k = KIND_STYLE[c.kind]
+          const Icon = k.icon
+          return (
+            <div
+              key={c.id}
+              role="button"
+              onMouseEnter={() => setHover(c.id)}
+              onMouseLeave={() => setHover(null)}
+              onPointerDown={(e) => {
+                if (e.button !== 0) return
+                const close = e.target instanceof Element && !!e.target.closest('button')
+                if (!settled()) return window.ccshell.toast.trace('按下（忽略）')
+                window.ccshell.toast.trace(close ? '按下（关闭）' : '按下（打开会话）')
+                if (!close) window.ccshell.toast.click(c.sessionId)
                 remove(c.id)
               }}
+              className="toast-in group relative flex cursor-pointer gap-3 rounded-lg border border-border bg-bg-raised p-3.5 pr-8 shadow-[0_4px_12px_rgba(0,0,0,0.16)] hover:border-border-strong"
             >
-              <X size={13} />
-            </button>
-          </div>
-        )
-      })}
+              <Icon size={18} className={'mt-0.5 shrink-0 ' + k.color} />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[13px] font-semibold text-text">{c.title}</div>
+                <div className="mt-0.5 line-clamp-3 text-[12.5px] leading-relaxed whitespace-pre-line text-text-2">{c.body}</div>
+                <div className="mt-1 text-[11px] text-text-3">
+                  {k.label} · {new Date(c.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                </div>
+              </div>
+              <button
+                title="关闭"
+                className="absolute top-2 right-2 flex size-6 items-center justify-center rounded-sm text-text-3 hover:bg-surface-2 hover:text-text"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

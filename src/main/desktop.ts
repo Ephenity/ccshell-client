@@ -14,6 +14,8 @@ const TRAY_ICONS: [number, string][] = [
 const TRAY_MENU_WIDTH = 276
 const TOAST_WIDTH = 412
 const FLOAT_WIDTH = 300
+const TOAST_IDLE_MS = 5_000
+const TOAST_HEIGHT = 560
 const DONE_DEDUPE_MS = 15_000
 const SOUND_GAP_MS = 4_000
 
@@ -85,12 +87,18 @@ export class Desktop {
     this.term.on('notice', (n) => this.notify(n))
 
     ipcMain.on('ui:active-session', (_e, id: string | null) => (this.activeSession = id))
-    ipcMain.on('toast:ready', () => {
+    const fromToast = (e: Electron.IpcMainEvent) => !!this.toast && !this.toast.isDestroyed() && e.sender === this.toast.webContents
+    ipcMain.on('toast:ready', (e) => {
+      if (!fromToast(e)) return
       this.toastReady = true
       for (const n of this.toastQueue.splice(0)) this.toast?.webContents.send('toast:add', n)
     })
-    ipcMain.on('toast:resize', (_e, height: number) => this.placeToast(height))
-    ipcMain.on('toast:click', (_e, sessionId?: string) => this.openSession(sessionId))
+    ipcMain.on('toast:resize', (e, height: number) => fromToast(e) && this.placeToast(height))
+    ipcMain.on('toast:click', (_e, sessionId?: string) => {
+      log('通知', `点击卡片${sessionId ? `：${sessionId}` : ''}`)
+      this.openSession(sessionId, true)
+    })
+    ipcMain.on('toast:trace', (_e, what: string) => log('通知', `卡片收到${String(what).slice(0, 40)}`))
     ipcMain.on('float:open-session', (_e, id: string) => this.openSession(id))
     ipcMain.on('float:resize', (_e, height: number) => {
       if (!this.float) return
@@ -160,8 +168,13 @@ export class Desktop {
     } else this.showWindow()
   }
 
-  openSession(id?: string): void {
+  openSession(id?: string, raise = false): void {
     const win = this.showWindow()
+    if (win && raise && !win.isFocused()) {
+      win.setAlwaysOnTop(true)
+      win.setAlwaysOnTop(false)
+      win.focus()
+    }
     if (win && id) win.webContents.send('ui:open-session', id)
   }
 
@@ -184,6 +197,8 @@ export class Desktop {
     if (sound) this.lastSound = now
     const payload = { ...n, sound }
     this.ensureToast()
+    if (this.toastIdle) clearTimeout(this.toastIdle)
+    this.toastIdle = null
     this.raiseToast = true
     if (this.toastReady) this.toast!.webContents.send('toast:add', payload)
     else {
@@ -196,8 +211,7 @@ export class Desktop {
     if (this.toast && !this.toast.isDestroyed()) return
     this.toastReady = false
     this.toast = new BrowserWindow({
-      width: TOAST_WIDTH,
-      height: 10,
+      ...this.toastBounds(),
       show: false,
       frame: false,
       transparent: true,
@@ -209,35 +223,88 @@ export class Desktop {
       hasShadow: false,
       webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: true, contextIsolation: true, autoplayPolicy: 'no-user-gesture-required', backgroundThrottling: false }
     })
-    this.toast.setAlwaysOnTop(true, 'pop-up-menu')
-    this.toast.on('closed', () => (this.toast = null))
-    this.toast.webContents.on('render-process-gone', (_e, d) => {
-      log('通知', `卡片窗口页面退出（${d.reason}），下次重建`)
-      if (this.toast && !this.toast.isDestroyed()) this.toast.destroy()
-      this.toast = null
-      this.toastReady = false
+    const t = this.toast
+    t.setAlwaysOnTop(true, 'pop-up-menu')
+    t.setIgnoreMouseEvents(true, { forward: true })
+    this.toastCapture = false
+    t.on('closed', () => {
+      if (this.toast === t) this.toast = null
     })
-    loadPage(this.toast, 'toast')
+    t.webContents.on('render-process-gone', (_e, d) => {
+      log('通知', `卡片窗口页面退出（${d.reason}），下次重建`)
+      if (!t.isDestroyed()) t.destroy()
+      if (this.toast === t) {
+        this.toast = null
+        this.toastReady = false
+      }
+    })
+    loadPage(t, 'toast')
+  }
+
+  private toastBounds(): Electron.Rectangle {
+    const wa = screen.getPrimaryDisplay().workArea
+    const h = Math.min(TOAST_HEIGHT, wa.height)
+    return { x: wa.x + wa.width - TOAST_WIDTH, y: wa.y + wa.height - h, width: TOAST_WIDTH, height: h }
   }
 
   private raiseToast = false
+  private toastIdle: ReturnType<typeof setTimeout> | null = null
+  private toastCardsHeight = 0
+  private toastCapture = false
+  private toastMouseTimer: ReturnType<typeof setInterval> | null = null
+
+  private trackToastMouse(): void {
+    const t = this.toast
+    const active = !!t && !t.isDestroyed() && t.isVisible() && this.toastCardsHeight > 0
+    if (!active) {
+      if (this.toastMouseTimer) clearInterval(this.toastMouseTimer)
+      this.toastMouseTimer = null
+      if (t && !t.isDestroyed() && this.toastCapture) t.setIgnoreMouseEvents(true, { forward: true })
+      this.toastCapture = false
+      return
+    }
+    this.toastMouseTimer ??= setInterval(() => this.trackToastMouse(), 50)
+    const b = t.getBounds()
+    const p = screen.getCursorScreenPoint()
+    const inside = p.x >= b.x + 16 && p.x < b.x + b.width - 16 && p.y >= b.y + b.height - this.toastCardsHeight + 12 && p.y < b.y + b.height - 20
+    if (inside !== this.toastCapture) {
+      this.toastCapture = inside
+      t.setIgnoreMouseEvents(!inside, { forward: true })
+    }
+  }
+
   private placeToast(height: number): void {
     const t = this.toast
     if (!t || t.isDestroyed()) return
     if (height <= 0) {
       t.hide()
+      this.toastCardsHeight = 0
+      this.trackToastMouse()
+      if (this.toastIdle) clearTimeout(this.toastIdle)
+      this.toastIdle = setTimeout(() => {
+        this.toastIdle = null
+        if (this.toast !== t || t.isDestroyed() || t.isVisible()) return
+        this.toast = null
+        this.toastReady = false
+        t.destroy()
+      }, TOAST_IDLE_MS)
       return
     }
-    const wa = screen.getPrimaryDisplay().workArea
-    const h = Math.min(Math.round(height), wa.height)
-    t.setBounds({ x: wa.x + wa.width - TOAST_WIDTH, y: wa.y + wa.height - h, width: TOAST_WIDTH, height: h })
+    const h = Math.round(height)
+    this.toastCardsHeight = h
     const wasVisible = t.isVisible()
-    if (!wasVisible) t.showInactive()
+    if (!wasVisible) {
+      const b = this.toastBounds()
+      const cur = t.getBounds()
+      if (cur.x !== b.x || cur.y !== b.y || cur.width !== b.width || cur.height !== b.height) t.setBounds(b)
+      t.showInactive()
+    }
+    this.trackToastMouse()
     if (this.raiseToast) {
       this.raiseToast = false
       t.setAlwaysOnTop(true, 'pop-up-menu')
       t.moveTop()
-      log('通知', `卡片显示：${wasVisible ? '已在显示，提到最上面' : '显示'}，高 ${h}，位置 ${t.getBounds().x},${t.getBounds().y}，可见 ${t.isVisible()}，置顶 ${t.isAlwaysOnTop()}`)
+      log('通知', `卡片显示：${wasVisible ? '已在显示，提到最上面' : '显示'}，高 ${h}，窗口 ${t.getBounds().x},${t.getBounds().y},${t.getBounds().height}，可见 ${t.isVisible()}，置顶 ${t.isAlwaysOnTop()}，缩放 ${screen.getPrimaryDisplay().scaleFactor}`)
     }
   }
 
@@ -264,7 +331,9 @@ export class Desktop {
     this.tray.on('click', () => this.showWindow())
     this.tray.on('right-click', () => this.showTrayMenu())
     ipcMain.on('tray:resize', (_e, height: number) => {
-      this.trayMenuHeight = Math.max(80, Math.min(640, Math.round(height)))
+      const h = Math.max(80, Math.min(640, Math.round(height)))
+      if (h === this.trayMenuHeight) return
+      this.trayMenuHeight = h
       if (this.trayMenu?.isVisible()) this.placeTrayMenu()
     })
     ipcMain.on('tray:hide', () => this.trayMenu?.hide())
@@ -309,10 +378,11 @@ export class Desktop {
     return win
   }
 
+  private trayAnchor: Electron.Point | null = null
   private placeTrayMenu(): void {
     const win = this.trayMenu
     if (!win || win.isDestroyed()) return
-    const p = screen.getCursorScreenPoint()
+    const p = this.trayAnchor ?? screen.getCursorScreenPoint()
     const wa = screen.getDisplayNearestPoint(p).workArea
     const w = TRAY_MENU_WIDTH
     const h = Math.min(this.trayMenuHeight, wa.height - 8)
@@ -326,6 +396,7 @@ export class Desktop {
 
   private showTrayMenu(): void {
     const win = this.ensureTrayMenu()
+    this.trayAnchor = screen.getCursorScreenPoint()
     this.placeTrayMenu()
     win.webContents.send('tray:shown')
     win.show()

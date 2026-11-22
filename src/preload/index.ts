@@ -216,6 +216,7 @@ const api = {
     ready: () => ipcRenderer.send('toast:ready'),
     resize: (height: number) => ipcRenderer.send('toast:resize', height),
     click: (sessionId?: string) => ipcRenderer.send('toast:click', sessionId),
+    trace: (what: string) => ipcRenderer.send('toast:trace', what),
     onAdd: (listener: (n: Notice & { sound: boolean }) => void) => subscribe('toast:add', listener)
   },
 

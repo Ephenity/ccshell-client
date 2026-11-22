@@ -72,8 +72,9 @@ const peerBody = (t: string) => t.split('\n\n').slice(1, -1).join('\n\n').trim()
 
 function UserMessage({ message, onOpenPeer }: { message: ChatMessage; onOpenPeer?: (id: string) => void }) {
   const from = message.from
+  const [copied, setCopied] = useState(false)
   return (
-    <div className="anim-rise flex flex-col items-end gap-2">
+    <div className="anim-rise group flex flex-col items-end gap-2">
       {!!message.attachments?.length && <Attachments items={message.attachments} />}
       {from && (
         <button
@@ -95,6 +96,20 @@ function UserMessage({ message, onOpenPeer }: { message: ChatMessage; onOpenPeer
         >
           {from ? peerBody(message.text) : message.text}
         </div>
+      )}
+      {message.text && (
+        <span className="-mt-1 flex opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+          <IconButton
+            title="复制"
+            onClick={() => {
+              void navigator.clipboard.writeText(from ? peerBody(message.text) : message.text)
+              setCopied(true)
+              setTimeout(() => setCopied(false), 1500)
+            }}
+          >
+            {copied ? <Check size={14} /> : <Copy size={14} />}
+          </IconButton>
+        </span>
       )}
     </div>
   )
