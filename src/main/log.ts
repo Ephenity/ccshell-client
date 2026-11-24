@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync, readdirSync, readFileSync, statSync, writeFi
 import { join } from 'node:path'
 import { app } from 'electron'
 
-export type LogArea = '客户端' | '会话' | '安装' | '通知' | '卡住' | '清理' | 'hook' | '设置' | '队列' | '提示词' | '协作' | '后台' | 'Anthropic' | '更新'
+export type LogArea = '客户端' | '会话' | '安装' | '通知' | '卡住' | '清理' | 'hook' | '设置' | '队列' | '提示词' | '协作' | '后台' | 'Anthropic' | '更新' | '账号'
 
 function file(): string {
   const dir = app.getPath('logs')

@@ -1,4 +1,5 @@
 import type { Session } from 'electron'
+import { log } from '../log'
 
 export class ApiError extends Error {
   constructor(
@@ -51,11 +52,14 @@ export async function apiRequest<T>(ses: Session, baseUrl: string, path: string,
       },
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body)
     })
-  } catch {
-    trace('network error')
-    throw new ApiError('网络连接失败，请检查网络或服务器地址', 0, 'network')
+  } catch (e) {
+    const reason = String((e as Error)?.message ?? e).match(/net::ERR_[A-Z_]+/)?.[0] ?? String((e as Error)?.message ?? e).slice(0, 120)
+    trace(`network error ${reason}`)
+    log('账号', `${opts.method ?? 'GET'} ${path.split('?')[0]} 网络错误：${reason}`)
+    throw new ApiError(`网络连接失败（${reason}），请检查网络或服务器地址`, 0, 'network')
   }
   trace(response.status)
+  if (!response.ok && response.status !== 401) log('账号', `${opts.method ?? 'GET'} ${path.split('?')[0]} → HTTP ${response.status}`)
 
   let payload: { success?: boolean; data?: unknown; message?: unknown; code?: unknown }
   try {

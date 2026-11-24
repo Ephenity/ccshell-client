@@ -47,6 +47,7 @@ export async function runSelfTest(mockUrl: string): Promise<number> {
       else if (only === 'terminal') await (await import('./selftest-terminal')).terminalSelfTest(s, mockUrl, check)
       else if (only === 'security') await (await import('./selftest-security')).securitySelfTest(s, check)
       else if (only === 'update') await (await import('./selftest-update')).updateSelfTest(check)
+      else if (only === 'weblogin') await (await import('./selftest-weblogin')).webLoginSelfTest(s, mockUrl, check)
       else if (only === 'desktop') await (await import('./selftest-desktop')).desktopSelfTest(check)
       else check(`没有这一段：${only}`, false)
       await hostClient().quitHost().catch(() => undefined)
@@ -117,6 +118,7 @@ export async function runSelfTest(mockUrl: string): Promise<number> {
     const ok = await afterLogout.webLogin(null)
     check('网页登录窗口完成后客户端拿到登录状态', ok && afterLogout.state().user?.username === 'user')
     await afterLogout.logout()
+    await (await import('./selftest-weblogin')).webLoginSelfTest(afterLogout, mockUrl, check)
 
     const { chatSelfTest } = await import('./selftest-chat')
     await chatSelfTest(afterLogout, mockUrl, check)

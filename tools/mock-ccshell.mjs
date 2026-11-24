@@ -7,6 +7,7 @@ const now = () => Math.floor(Date.now() / 1000)
 const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
 const KID = 'mock-k1'
 let turnstile = false
+let authMock = { spa: false, sidStrict: false }
 
 const users = {
   user: { id: 1, username: 'user', password: 'user', display_name: process.env.MOCK_DISPLAY_NAME || '测试用户', email: 'user@example.com', group: 'default', quota: 12_345_678, used_quota: 2_500_000, request_count: 321, twofa: false },
@@ -127,6 +128,8 @@ const server = createServer(async (req, res) => {
   const m = req.method
   log(m, url.pathname + url.search, req.headers.cookie ? '[cookie]' : '', req.headers.authorization ? '[bearer]' : '', req.headers['x-auth-session'] ? '[sid]' : '', req.headers.origin ? `origin=${req.headers.origin}` : '')
   try {
+    if (m === 'POST' && path === '/__mock/auth') { authMock = { ...authMock, ...(await readBody(req)) }; return ok(res, authMock) }
+    if (m === 'POST' && path === '/__mock/expire-sessions') { refresh.clear(); access.clear(); return ok(res, {}) }
     if (m === 'POST' && path === '/__mock/turnstile') { turnstile = !!(await readBody(req)).on; return ok(res, { turnstile }) }
     if (m === 'GET' && path === '/__mock/last-request') return ok(res, lastModelRequest)
     if (m === 'POST' && path === '/__mock/model-error') { modelError = { ...modelError, ...(await readBody(req)) }; return ok(res, modelError) }
@@ -145,7 +148,7 @@ const server = createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
       return res.end(`<!doctype html><meta charset=utf-8><title>模拟登录</title><body style="font-family:sans-serif;padding:24px">
         <h3>模拟站点登录页</h3><input id=u value=user> <input id=p value=user type=password> <button id=go>登录</button>
-        <script>go.onclick=async()=>{const r=await fetch('/api/user/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u.value,password:p.value})});if((await r.json()).success)location.href='/dashboard/overview'}</script>`)
+        <script>go.onclick=async()=>{const r=await fetch('/api/user/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u.value,password:p.value})});if((await r.json()).success){if(${authMock.spa})history.pushState({},'','/console');else location.href='/dashboard/overview'}}</script>`)
     }
     if (m === 'GET' && path === '/dashboard/overview') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end('<!doctype html><meta charset=utf-8><body>控制台</body>') }
 
@@ -185,6 +188,8 @@ const server = createServer(async (req, res) => {
     if (m === 'POST' && path === '/api/user/auth/refresh') {
       const r = refresh.get(cookies(req).ccshell_refresh)
       if (!r) return fail(res, 401, 'Unauthorized')
+      const hs = req.headers['x-auth-session']
+      if (authMock.sidStrict && hs && hs !== r.sid) return fail(res, 401, 'Unauthorized')
       refresh.delete(cookies(req).ccshell_refresh)
       return issue(res, r.userId, r.sid)
     }

@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import { BrowserWindow, clipboard, session, type Session } from 'electron'
 import type { AccountOverview, AccountState, AccountUser, Announcement, LoginOutcome, Money } from '../../shared/ccshell'
 import { encryptPassword } from './crypto'
+import { log } from '../log'
 import { ApiError, apiRequest, type RequestOptions } from './http'
 import {
   DAY_MS,
@@ -150,6 +151,7 @@ export class CcShellService extends EventEmitter<{ changed: [AccountState] }> {
   }
 
   webLogin(parent: BrowserWindow | null): Promise<boolean> {
+    const origin = new URL(this.baseUrl).origin
     const win = new BrowserWindow({
       parent: parent ?? undefined,
       modal: !!parent,
@@ -159,30 +161,50 @@ export class CcShellService extends EventEmitter<{ changed: [AccountState] }> {
       autoHideMenuBar: true,
       webPreferences: { partition: 'persist:ccshell', sandbox: true, contextIsolation: true }
     })
-    return new Promise((resolve) => {
+    log('账号', '打开网页登录')
+    const captured = captureAuthBundles(win, origin)
+    return new Promise((resolve, reject) => {
       let done = false
-      const finish = (ok: boolean) => {
+      win.on('closed', () => {
         if (done) return
         done = true
-        if (!win.isDestroyed()) win.close()
-        resolve(ok)
-      }
+        log('账号', '网页登录窗口被关闭，未完成登录')
+        resolve(false)
+      })
       const check = async (url: string) => {
-        const u = new URL(url)
-        if (done || u.origin !== new URL(this.baseUrl).origin || AUTH_PATHS.some((p) => u.pathname.startsWith(p))) return
+        let u: URL
+        try {
+          u = new URL(url)
+        } catch {
+          return
+        }
+        if (done || u.origin !== origin || AUTH_PATHS.some((p) => u.pathname.startsWith(p))) return
         done = true
+        const bundle = await captured.latest()
         if (!win.isDestroyed()) win.destroy()
         try {
-          const ok = await this.refresh()
-          if (ok) await this.afterLogin()
-          resolve(ok)
-        } catch {
-          resolve(false)
+          if (bundle) {
+            log('账号', `网页登录完成（${u.pathname}），已取得登录结果`)
+            this.applyBundle(bundle)
+          } else {
+            log('账号', `网页登录完成（${u.pathname}），没取得登录结果，改用续期`)
+            this.dropSid()
+            if (!(await this.refresh())) throw new ApiError('网页登录已完成，但客户端没有取得登录状态，请重试')
+          }
+          await this.afterLogin()
+          log('账号', '登录成功')
+          resolve(true)
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          log('账号', `网页登录后获取登录状态失败：${msg}`)
+          reject(e instanceof ApiError ? e : new ApiError(`登录未完成：${msg}`))
         }
       }
       win.webContents.on('did-navigate', (_e, url) => void check(url))
       win.webContents.on('did-navigate-in-page', (_e, url) => void check(url))
-      win.on('closed', () => finish(false))
+      win.webContents.on('did-fail-load', (_e, code, desc, url, isMain) => {
+        if (isMain) log('账号', `网页登录页加载失败：${desc}（${code}）${url.split('?')[0]}`)
+      })
       void win.loadURL(`${this.baseUrl}/sign-in`)
     })
   }
@@ -340,6 +362,7 @@ export class CcShellService extends EventEmitter<{ changed: [AccountState] }> {
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) {
           this.accessToken = ''
+          this.dropSid()
           return false
         }
         throw e
@@ -370,6 +393,13 @@ export class CcShellService extends EventEmitter<{ changed: [AccountState] }> {
 
   private publicRequest<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     return apiRequest<T>(this.ses, this.baseUrl, path, opts)
+  }
+
+  private dropSid(): void {
+    if (!this.secrets.sid) return
+    const { sid: _old, ...rest } = this.secrets
+    this.secrets = rest
+    saveSecrets(this.secrets)
   }
 
   private sessionHeader(): Record<string, string> {
@@ -435,6 +465,53 @@ export class CcShellService extends EventEmitter<{ changed: [AccountState] }> {
 
   private emitChanged(): void {
     this.emit('changed', this.state())
+  }
+}
+
+function captureAuthBundles(win: BrowserWindow, origin: string): { latest: () => Promise<AuthBundle | null> } {
+  const dbg = win.webContents.debugger
+  const watching = new Set<string>()
+  const reads = new Set<Promise<void>>()
+  let latest: { at: number; bundle: AuthBundle } | null = null
+  let seq = 0
+  try {
+    dbg.attach('1.3')
+    void dbg.sendCommand('Network.enable').catch(() => {})
+  } catch (e) {
+    log('账号', `网页登录：无法读取登录结果（${e instanceof Error ? e.message : e}），将改用续期`)
+    return { latest: async () => null }
+  }
+  dbg.on('message', (_e, method, params) => {
+    if (method === 'Network.responseReceived') {
+      try {
+        const u = new URL(params.response?.url ?? '')
+        if (u.origin === origin && u.pathname.startsWith('/api/user/') && params.response?.status === 200) watching.add(params.requestId)
+      } catch {}
+      return
+    }
+    if (method === 'Network.loadingFailed') {
+      watching.delete(params.requestId)
+      return
+    }
+    if (method !== 'Network.loadingFinished' || !watching.delete(params.requestId)) return
+    const at = ++seq
+    const read = (async () => {
+      try {
+        const res = (await dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId })) as { body: string; base64Encoded: boolean }
+        const text = res.base64Encoded ? Buffer.from(res.body, 'base64').toString('utf8') : res.body
+        const data = (JSON.parse(text) as { success?: boolean; data?: AuthBundle })?.data
+        if (data?.access_token && (!latest || latest.at < at)) latest = { at, bundle: data }
+      } catch {}
+    })()
+    reads.add(read)
+    void read.finally(() => reads.delete(read))
+  })
+  return {
+    latest: async () => {
+      await new Promise((r) => setTimeout(r, 300))
+      await Promise.race([Promise.allSettled([...reads]), new Promise((r) => setTimeout(r, 3000))])
+      return latest?.bundle ?? null
+    }
   }
 }
 
