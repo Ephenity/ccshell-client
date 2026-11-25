@@ -3,7 +3,18 @@ import { statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import type { Result } from '../../shared/ccshell'
 import type { ClaudeAccount, TerminalOptions } from '../../shared/terminal'
-import { anthropicLoginDir, anthropicStatus, clearAnthropicApiKey, logoutAnthropic, setAnthropicApiKey } from '../anthropic'
+import {
+  addAnthropicAccount,
+  anthropicLoginDir,
+  anthropicState,
+  clearAnthropicApiKey,
+  logoutAnthropic,
+  removeAnthropicAccount,
+  renameAnthropicAccount,
+  setAnthropicApiKey,
+  setCurrentAnthropicId,
+  updateAnthropicAccount
+} from '../anthropic'
 import { configDir } from './claude'
 import { exportMarkdown, historyItem, historyMessages } from './history'
 import type { Popouts } from './popout'
@@ -70,11 +81,18 @@ export function registerTerminalIpc(term: TerminalService, installer: ClaudeInst
   handle('cc:check-update', () => installer.checkUpdate())
   handle('cc:uninstall', () => installer.uninstall())
   handle('cc:cancel', () => installer.cancel())
-  handle('term:open-config-dir', (_e, account?: ClaudeAccount) => shell.openPath(configDir(account === 'anthropic' ? 'anthropic' : 'ccshell')))
-  handle('anthropic:status', () => anthropicStatus())
-  handle('anthropic:set-key', (_e, key: string) => (setAnthropicApiKey(key), anthropicStatus()))
-  handle('anthropic:clear-key', () => (clearAnthropicApiKey(), anthropicStatus()))
-  handle('anthropic:logout', () => (logoutAnthropic(), anthropicStatus()))
+  handle('term:open-config-dir', (_e, account?: ClaudeAccount, anthropicId?: string) =>
+    shell.openPath(configDir(account === 'anthropic' ? 'anthropic' : 'ccshell', anthropicId))
+  )
+  handle('anthropic:state', () => anthropicState())
+  handle('anthropic:add', (_e, name?: string) => (addAnthropicAccount(name), anthropicState()))
+  handle('anthropic:rename', (_e, id: string, name: string) => (renameAnthropicAccount(id, name), anthropicState()))
+  handle('anthropic:remove', (_e, id: string, deleteData: boolean) => (removeAnthropicAccount(id, deleteData), anthropicState()))
+  handle('anthropic:update', (_e, id: string, patch: { method?: 'subscription' | 'apikey'; model?: string }) => (updateAnthropicAccount(id, patch), anthropicState()))
+  handle('anthropic:select', (_e, id: string) => (setCurrentAnthropicId(id), anthropicState()))
+  handle('anthropic:set-key', (_e, id: string, key: string) => (setAnthropicApiKey(id, key), anthropicState()))
+  handle('anthropic:clear-key', (_e, id: string) => (clearAnthropicApiKey(id), anthropicState()))
+  handle('anthropic:logout', (_e, id: string) => (logoutAnthropic(id), anthropicState()))
   handle('anthropic:login-dir', () => anthropicLoginDir())
   handle('term:pick-dir', async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)

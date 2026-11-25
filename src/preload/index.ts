@@ -11,7 +11,7 @@ import type { ThemeName } from '../shared/theme'
 import type { PromptItem, PromptPatch, PromptUse } from '../shared/prompts'
 import type { PeerEntry } from '../shared/peers'
 import type { SessionQueue } from '../shared/queue'
-import type { AnthropicStatus } from '../shared/anthropic'
+import type { AnthropicState } from '../shared/anthropic'
 import type { UpdateState } from '../shared/update'
 
 type KbInput = Pick<KnowledgeBase, 'name' | 'description' | 'embeddingModel'>
@@ -138,7 +138,7 @@ const api = {
     continueNow: (id: string) => invoke<string>('term:continue', id),
     pickDir: () => invoke<string | null>('term:pick-dir'),
     pickClaude: () => invoke<string | null>('term:pick-claude'),
-    openConfigDir: (account?: 'ccshell' | 'anthropic') => invoke<string>('term:open-config-dir', account),
+    openConfigDir: (account?: 'ccshell' | 'anthropic', anthropicId?: string) => invoke<string>('term:open-config-dir', account, anthropicId),
     pathOf: (file: File) => webUtils.getPathForFile(file),
     savePastedImage: (data: Uint8Array, mediaType: string) => invoke<string>('term:save-pasted-image', data, mediaType),
     write: (id: string, data: string) => ipcRenderer.send('term:write', id, data),
@@ -148,10 +148,15 @@ const api = {
   },
 
   anthropic: {
-    status: () => invoke<AnthropicStatus>('anthropic:status'),
-    setApiKey: (key: string) => invoke<AnthropicStatus>('anthropic:set-key', key),
-    clearApiKey: () => invoke<AnthropicStatus>('anthropic:clear-key'),
-    logout: () => invoke<AnthropicStatus>('anthropic:logout'),
+    state: () => invoke<AnthropicState>('anthropic:state'),
+    add: (name?: string) => invoke<AnthropicState>('anthropic:add', name),
+    rename: (id: string, name: string) => invoke<AnthropicState>('anthropic:rename', id, name),
+    remove: (id: string, deleteData: boolean) => invoke<AnthropicState>('anthropic:remove', id, deleteData),
+    update: (id: string, patch: { method?: 'subscription' | 'apikey'; model?: string }) => invoke<AnthropicState>('anthropic:update', id, patch),
+    select: (id: string) => invoke<AnthropicState>('anthropic:select', id),
+    setApiKey: (id: string, key: string) => invoke<AnthropicState>('anthropic:set-key', id, key),
+    clearApiKey: (id: string) => invoke<AnthropicState>('anthropic:clear-key', id),
+    logout: (id: string) => invoke<AnthropicState>('anthropic:logout', id),
     loginDir: () => invoke<string>('anthropic:login-dir')
   },
   queue: {

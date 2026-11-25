@@ -1,3 +1,4 @@
+import { DEFAULT_ANTHROPIC_ID, type AnthropicAccount } from './anthropic'
 import type { ClaudeAccount } from './terminal'
 export type QuitAction = 'ask' | 'detach' | 'end'
 
@@ -25,6 +26,8 @@ export interface AppSettings {
       method: 'subscription' | 'apikey'
       model: string
     }
+    anthropicAccounts: AnthropicAccount[]
+    anthropicAccountId: string
   }
   appearance: {
     openAtLogin: boolean
@@ -99,7 +102,9 @@ export const defaultSettings: AppSettings = {
     account: 'ccshell',
     binary: 'auto',
     binaryPath: '',
-    anthropic: { method: 'subscription', model: '' }
+    anthropic: { method: 'subscription', model: '' },
+    anthropicAccounts: [],
+    anthropicAccountId: DEFAULT_ANTHROPIC_ID
   },
   appearance: { openAtLogin: false, closeToTray: false, onQuit: 'ask', intro: true, onboarded: false, guidedUsers: [] },
   network: { registry: 'official', customRegistry: '', proxy: 'system', customProxy: '' },

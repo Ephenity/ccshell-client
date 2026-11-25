@@ -10,6 +10,7 @@ export interface TerminalSession {
   cwd: string
   model: string
   account?: ClaudeAccount
+  anthropicId?: string
   createdAt: number
   status: 'running' | 'exited'
   state: ClaudeState
@@ -40,6 +41,7 @@ export interface Notice {
 export interface TerminalOptions {
   cwd: string
   account?: ClaudeAccount
+  anthropicId?: string
   model: string
   allModels: boolean
   continueLast?: boolean
@@ -83,6 +85,7 @@ export interface HistoryItem {
   updatedAt: number
   size: number
   account?: ClaudeAccount
+  anthropicId?: string
   openIn?: string
 }
 

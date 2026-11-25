@@ -6,7 +6,7 @@ import type { EnvCheck } from '../shared/maintenance'
 import { NODE_DOWNLOAD_URL } from '../shared/terminal'
 import type { CcShellService } from './ccshell/service'
 import { claudeVersion, configDir, findClaude } from './terminal/claude'
-import { anthropicStatus } from './anthropic'
+import { anthropicState } from './anthropic'
 import type { ClaudeInstaller } from './terminal/installer'
 import type { TerminalService } from './terminal/service'
 
@@ -90,12 +90,13 @@ export async function envCheck(deps: { ccshell: CcShellService; installer: Claud
       ? { id: 'no-login', group: 'Claude Code', label: 'CC Shell 配置目录', status: 'error', detail: `存在 Anthropic 账户登录凭据：${creds}`, fix: '请删除该文件；Anthropic 账户请在启动会话时选择 Anthropic，它使用独立的配置目录。' }
       : { id: 'no-login', group: 'Claude Code', label: 'CC Shell 配置目录', status: 'ok', detail: '无 Anthropic 账户登录凭据' }
   )
-  const an = anthropicStatus()
-  const way = an.method === 'apikey' ? 'API 密钥' : '订阅账户'
+  const accounts = anthropicState().accounts
+  const ready = accounts.filter((a) => a.ready)
+  const detail = (a: (typeof accounts)[number]) => `${a.name}：${a.method === 'apikey' ? `API 密钥（…${a.apiKeyHint}）` : '订阅账户（已登录）'}`
   add(
-    an.ready
-      ? { id: 'anthropic', group: 'Claude Code', label: 'Anthropic 账户', status: 'ok', detail: an.method === 'apikey' ? `使用 API 密钥（…${an.apiKeyHint}）` : '使用订阅账户（已登录）' }
-      : { id: 'anthropic', group: 'Claude Code', label: 'Anthropic 账户', status: 'info', detail: `未配置（当前方式：${way}）`, fix: '可选。需要时在“设置 → Anthropic 账户”中登录或填写密钥。' }
+    ready.length
+      ? { id: 'anthropic', group: 'Claude Code', label: 'Anthropic 账户', status: 'ok', detail: `${ready.length} / ${accounts.length} 个可用 · ${ready.map(detail).join('；')}` }
+      : { id: 'anthropic', group: 'Claude Code', label: 'Anthropic 账户', status: 'info', detail: `${accounts.length} 个账户，都未配置`, fix: '可选。需要时在“设置 → Anthropic 账户”中登录或填写密钥。' }
   )
   const running = deps.term.list().filter((s) => s.status === 'running')
   const noHook = running.filter((s) => s.state === 'running')

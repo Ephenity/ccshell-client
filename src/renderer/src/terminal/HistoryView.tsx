@@ -1,4 +1,5 @@
 import { Loading } from '../components/Loading'
+import { anthropicLabel, useAnthropicNames } from './anthropicNames'
 import { Segmented } from '../components/Segmented'
 import { confirmDialog } from '../components/Dialog'
 import { Download, Play, RefreshCw, Search, Star, Trash2, Wrench } from 'lucide-react'
@@ -37,6 +38,7 @@ export function HistoryView(props: {
     void window.ccshell.terminal.historyMessages(selected).then((r) => (r.ok ? setMessages(r.data) : setError(r.error)))
   }, [selected])
 
+  const anthNames = useAnthropicNames()
   const [scope, setScope] = useState<'all' | 'ccshell' | 'anthropic'>('all')
   const hasAnth = !!items?.some((h) => h.account === 'anthropic')
   const filtered = useMemo(() => {
@@ -112,7 +114,7 @@ export function HistoryView(props: {
                 <span className="truncate font-mono" title={h.cwd}>
                   {dirName(h.cwd)}
                 </span>
-                {h.account === 'anthropic' && <span className="shrink-0 text-brand-text">Anthropic</span>}
+                {h.account === 'anthropic' && <span className="shrink-0 text-brand-text">{anthropicLabel(anthNames, h.anthropicId)}</span>}
                 <span className="shrink-0">{h.messages} 条</span>
                 <span className="ml-auto shrink-0">{when(h.updatedAt)}</span>
               </span>

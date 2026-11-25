@@ -5,16 +5,20 @@ import { delimiter, dirname, join, resolve } from 'node:path'
 import { app, nativeTheme } from 'electron'
 import { settings } from '../settings'
 import { pathDirs } from '../syspath'
+import { DEFAULT_ANTHROPIC_ID } from '../../shared/anthropic'
 import type { ClaudeAccount } from '../../shared/terminal'
 
 export const WIN_PKG = join('node_modules', '@anthropic-ai', 'claude-code-win32-x64', 'claude.exe')
 
-export function configDir(account: ClaudeAccount = 'ccshell'): string {
-  return join(app.getPath('userData'), account === 'anthropic' ? 'claude-anthropic' : 'claude')
+export function configDir(account: ClaudeAccount = 'ccshell', anthropicId?: string): string {
+  const root = app.getPath('userData')
+  if (account !== 'anthropic') return join(root, 'claude')
+  const id = anthropicId || DEFAULT_ANTHROPIC_ID
+  return join(root, id === DEFAULT_ANTHROPIC_ID ? 'claude-anthropic' : `claude-anthropic-${id}`)
 }
 
-export function anthropicLoggedIn(): boolean {
-  return existsSync(join(configDir('anthropic'), '.credentials.json'))
+export function anthropicLoggedIn(anthropicId?: string): boolean {
+  return existsSync(join(configDir('anthropic', anthropicId), '.credentials.json'))
 }
 
 export function ownInstallDir(): string {
@@ -111,7 +115,7 @@ export function claudeVersion(path: string): Promise<string | null> {
   })
 }
 
-export function cleanEnv(account: ClaudeAccount = 'ccshell'): Record<string, string> {
+export function cleanEnv(account: ClaudeAccount = 'ccshell', anthropicId?: string): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue
@@ -119,7 +123,7 @@ export function cleanEnv(account: ClaudeAccount = 'ccshell'): Record<string, str
     if (/^(ELECTRON_|VITE_|CCSHELL_|npm_)/i.test(k)) continue
     env[k] = v
   }
-  env.CLAUDE_CONFIG_DIR = configDir(account)
+  env.CLAUDE_CONFIG_DIR = configDir(account, anthropicId)
   return env
 }
 
@@ -154,6 +158,7 @@ export function launchEnv(p: LaunchParams): Record<string, string> {
 }
 
 export interface AnthropicLaunchParams {
+  accountId: string
   method: 'subscription' | 'apikey'
   apiKey?: string
   model?: string
@@ -161,7 +166,7 @@ export interface AnthropicLaunchParams {
 }
 
 export function anthropicEnv(p: AnthropicLaunchParams): Record<string, string> {
-  const env = cleanEnv('anthropic')
+  const env = cleanEnv('anthropic', p.accountId)
   if (p.method === 'apikey') {
     if (!p.apiKey) throw new Error('尚未设置 Anthropic API 密钥')
     env.ANTHROPIC_API_KEY = p.apiKey
@@ -194,8 +199,13 @@ export function assertNoAccountLogin(): void {
     )
 }
 
-export function prepareConfig(cwd: string, version: string | null, account: ClaudeAccount = 'ccshell', apiKey?: string): void {
-  const dir = configDir(account)
+export function prepareConfig(
+  cwd: string,
+  version: string | null,
+  account: ClaudeAccount = 'ccshell',
+  opts: { apiKey?: string; anthropicId?: string } = {}
+): void {
+  const dir = configDir(account, opts.anthropicId)
   mkdirSync(dir, { recursive: true })
   const file = join(dir, '.claude.json')
   let cfg: Record<string, unknown> = {}
@@ -211,9 +221,9 @@ export function prepareConfig(cwd: string, version: string | null, account: Clau
     projects[key] = { ...projects[key], hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true }
   }
   cfg.projects = projects
-  if (account === 'anthropic' && apiKey) {
+  if (account === 'anthropic' && opts.apiKey) {
     const r = (cfg.customApiKeyResponses ?? {}) as { approved?: string[]; rejected?: string[] }
-    const tail = apiKey.slice(-20)
+    const tail = opts.apiKey.slice(-20)
     cfg.customApiKeyResponses = { ...r, approved: [...new Set([...(r.approved ?? []), tail])], rejected: (r.rejected ?? []).filter((x) => x !== tail) }
   }
   writeFileSync(file + '.tmp', JSON.stringify(cfg, null, 2))

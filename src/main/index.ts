@@ -271,6 +271,7 @@ app.whenReady().then(async () => {
       log('客户端', `退出时处理会话出错：${(err as Error).message}`)
     }
     mcp.closeAll()
+    await ccshell.flushCookies()
     quitPhase = 'done'
     app.quit()
   }

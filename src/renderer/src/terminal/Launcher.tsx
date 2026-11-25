@@ -3,12 +3,14 @@ import { FolderOpen, Play, ShieldCheck, Star } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { ModelInfo } from '../../../shared/chat'
 import type { ClaudeAccount, TerminalInfo, TerminalSession } from '../../../shared/terminal'
-import { ANTHROPIC_MODEL_ALIASES, type AnthropicStatus } from '../../../shared/anthropic'
+import { ANTHROPIC_MODEL_ALIASES, type AnthropicAccountStatus, type AnthropicState } from '../../../shared/anthropic'
 import { Segmented } from '../components/Segmented'
 import { useAccount } from '../account'
 import { InstallPanel } from './InstallPanel'
 import { usePrompts } from './queueState'
 import { promptLabel } from '../../../shared/prompts'
+
+const MANAGE = '__manage__'
 
 export function Launcher(props: {
   info: TerminalInfo | null
@@ -31,13 +33,18 @@ export function Launcher(props: {
   const [error, setError] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [acct, setAcct] = useState<ClaudeAccount>('ccshell')
-  const [anth, setAnth] = useState<AnthropicStatus | null>(null)
+  const [anth, setAnth] = useState<AnthropicState | null>(null)
+  const [anId, setAnId] = useState('')
   const [anModel, setAnModel] = useState('')
   const [anCustom, setAnCustom] = useState(false)
   const hasKey = !!account.activeKey
   const isAnth = acct === 'anthropic'
-  const remember = (cc: { account?: ClaudeAccount; model?: string; allModels?: boolean; anthropic?: { model: string } }) =>
+  const anAccount: AnthropicAccountStatus | null = anth ? (anth.accounts.find((a) => a.id === anId) ?? anth.accounts[0]) : null
+  const remember = (cc: { account?: ClaudeAccount; model?: string; allModels?: boolean }) =>
     void window.ccshell.settings.update({ claudeCode: cc }).then(() => props.reloadInfo())
+  const saveAnModel = (m: string) => {
+    if (anAccount) void window.ccshell.anthropic.update(anAccount.id, { model: m }).then((r) => r.ok && setAnth(r.data))
+  }
 
   useEffect(() => {
     if (!info || loaded) return
@@ -49,13 +56,23 @@ export function Launcher(props: {
   }, [info, loaded])
 
   useEffect(() => {
-    void window.ccshell.anthropic.status().then((r) => {
+    void window.ccshell.anthropic.state().then((r) => {
       if (!r.ok) return
       setAnth(r.data)
-      setAnModel((m) => m || r.data.model)
-      if (!ANTHROPIC_MODEL_ALIASES.some(([v]) => v === r.data.model)) setAnCustom(true)
+      setAnId((id) => (r.data.accounts.some((a) => a.id === id) ? id : r.data.currentId))
     })
   }, [acct])
+
+  useEffect(() => {
+    if (!anAccount) return
+    setAnModel(anAccount.model)
+    setAnCustom(!ANTHROPIC_MODEL_ALIASES.some(([v]) => v === anAccount.model))
+  }, [anAccount?.id])
+
+  const pickAnthropic = (id: string) => {
+    setAnId(id)
+    void window.ccshell.anthropic.select(id).then((r) => r.ok && setAnth(r.data))
+  }
 
   useEffect(() => {
     if (!hasKey) return
@@ -72,7 +89,7 @@ export function Launcher(props: {
     setError(null)
     const r = await window.ccshell.terminal.create(
       isAnth
-        ? { cwd: dir, account: 'anthropic', model: anModel.trim(), allModels: false, continueLast, title: title.trim() || undefined }
+        ? { cwd: dir, account: 'anthropic', anthropicId: anAccount?.id, model: anModel.trim(), allModels: false, continueLast, title: title.trim() || undefined }
         : { cwd: dir, model, allModels, continueLast, title: title.trim() || undefined }
     )
     setBusy(false)
@@ -87,7 +104,9 @@ export function Launcher(props: {
     setError(null)
     const r = await window.ccshell.prompts.use(
       promptId,
-      isAnth ? { action: 'new', cwd, title: title.trim() || undefined, model: anModel.trim(), account: 'anthropic' } : { action: 'new', cwd, title: title.trim() || undefined, model, allModels }
+      isAnth
+        ? { action: 'new', cwd, title: title.trim() || undefined, model: anModel.trim(), account: 'anthropic', anthropicId: anAccount?.id }
+        : { action: 'new', cwd, title: title.trim() || undefined, model, allModels }
     )
     setBusy(false)
     if (!r.ok) return setError(r.error)
@@ -112,7 +131,7 @@ export function Launcher(props: {
     props.reloadInfo()
   }
 
-  const blocked = isAnth ? (anth && !anth.ready ? 'anthropic' : info && !info.claudePath ? 'claude' : null) : !account.user || !hasKey ? 'account' : info && !info.claudePath ? 'claude' : null
+  const blocked = isAnth ? (anAccount && !anAccount.ready ? 'anthropic' : info && !info.claudePath ? 'claude' : null) : !account.user || !hasKey ? 'account' : info && !info.claudePath ? 'claude' : null
   const dirs = info ? [...info.pinnedDirs.map((d) => ({ d, pinned: true })), ...info.recentDirs.map((d) => ({ d, pinned: false }))] : []
 
   return (
@@ -130,9 +149,9 @@ export function Launcher(props: {
             </button>
           </div>
         )}
-        {blocked === 'anthropic' && anth && (
+        {blocked === 'anthropic' && anAccount && (
           <div className="rounded-md border border-border bg-surface px-4 py-3 text-[13px] text-text-2">
-            {anth.method === 'apikey' ? '尚未设置 Anthropic API 密钥。' : 'Anthropic 订阅账户尚未登录。'}
+            {anAccount.method === 'apikey' ? `账户“${anAccount.name}”尚未设置 Anthropic API 密钥。` : `账户“${anAccount.name}”的订阅尚未登录。`}
             <button className="ml-1 text-brand-text hover:underline" onClick={() => window.dispatchEvent(new CustomEvent('ccshell-go', { detail: 'anthropic' }))}>
               前往设置
             </button>
@@ -155,7 +174,7 @@ export function Launcher(props: {
               value={acct}
               options={[
                 { value: 'ccshell', label: 'CC Shell' },
-                { value: 'anthropic', label: 'Anthropic', title: anth ? (anth.ready ? (anth.method === 'apikey' ? 'API 密钥' : '订阅账户') : '尚未配置') : undefined }
+                { value: 'anthropic', label: 'Anthropic', title: anAccount ? (anAccount.ready ? (anAccount.method === 'apikey' ? 'API 密钥' : '订阅账户') : '尚未配置') : undefined }
               ]}
               onChange={(v) => {
                 setAcct(v)
@@ -163,6 +182,27 @@ export function Launcher(props: {
               }}
             />
           </div>
+          {isAnth && anth && (
+            <label className="flex items-center justify-between gap-3 text-[13px] text-text-2">
+              <span className="flex items-center gap-1.5">
+                Anthropic 账户
+                {anAccount && <span className={'size-2 rounded-full ' + (anAccount.ready ? 'bg-success' : 'bg-border-strong')} title={anAccount.ready ? '可以使用' : '尚未配置'} />}
+              </span>
+              <Select
+                value={anAccount?.id ?? ''}
+                onChange={(e) => (e.target.value === MANAGE ? window.dispatchEvent(new CustomEvent('ccshell-go', { detail: 'anthropic' })) : pickAnthropic(e.target.value))}
+                className="h-9 w-64 rounded-md border border-border-strong bg-bg-raised px-2 text-[13px] text-text outline-none focus:border-brand"
+              >
+                {anth.accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                    {a.ready ? '' : '（尚未配置）'}
+                  </option>
+                ))}
+                <option value={MANAGE}>管理账户…</option>
+              </Select>
+            </label>
+          )}
           <div className="flex flex-col gap-1.5">
             <span className="text-[13px] text-text-2">项目目录</span>
             <div className="flex gap-2">
@@ -223,7 +263,7 @@ export function Launcher(props: {
                     if (e.target.value === '__custom__') return setAnCustom(true)
                     setAnCustom(false)
                     setAnModel(e.target.value)
-                    remember({ anthropic: { model: e.target.value } })
+                    saveAnModel(e.target.value)
                   }}
                   className="h-9 w-64 rounded-md border border-border-strong bg-bg-raised px-2 font-mono text-[13px] text-text outline-none focus:border-brand"
                 >
@@ -239,7 +279,7 @@ export function Launcher(props: {
                 <input
                   value={anModel}
                   onChange={(e) => setAnModel(e.target.value)}
-                  onBlur={(e) => remember({ anthropic: { model: e.target.value.trim() } })}
+                  onBlur={(e) => saveAnModel(e.target.value.trim())}
                   placeholder="完整模型名"
                   aria-label="自定义模型名"
                   className="h-9 w-64 self-end rounded-md border border-border-strong bg-bg-raised px-3 font-mono text-[13px] text-text outline-none focus:border-brand"
@@ -326,7 +366,7 @@ export function Launcher(props: {
             className="flex items-center gap-1"
             title={
               isAnth
-                ? '使用 Anthropic 账户运行；登录凭据、设置与对话记录保存在独立的配置目录，与 CC Shell 账户和系统中的 Claude Code 互不影响'
+                ? '使用 Anthropic 账户运行；每个账户的登录凭据、设置与对话记录保存在各自的配置目录，与其他账户和系统中的 Claude Code 互不影响'
                 : '使用 CC Shell 密钥运行；配置与对话记录独立于 Anthropic 账户和系统中的 Claude Code'
             }
           >
@@ -338,7 +378,7 @@ export function Launcher(props: {
               <span className="text-border-strong">·</span>
               <span title={info.claudePath ?? undefined}>Claude Code {info.claudePath ? (info.version ?? '版本未知') : '未安装'}</span>
               <span className="text-border-strong">·</span>
-              <button className="hover:text-text hover:underline" title={isAnth ? anth?.configDir : info.configDir} onClick={() => void window.ccshell.terminal.openConfigDir(acct)}>
+              <button className="hover:text-text hover:underline" title={isAnth ? anAccount?.configDir : info.configDir} onClick={() => void window.ccshell.terminal.openConfigDir(acct, anAccount?.id)}>
                 配置目录
               </button>
             </>

@@ -1,5 +1,6 @@
 import { basename } from 'node:path'
 import { BrowserWindow, clipboard, ipcMain } from 'electron'
+import { anthropicAccount } from './anthropic'
 import type { Result } from '../shared/ccshell'
 import { promptLabel, type PromptPatch, type PromptUse } from '../shared/prompts'
 import { fillPlaceholders, type QueueItem } from '../shared/queue'
@@ -61,7 +62,7 @@ export function registerQueueIpc(queue: QueueService, prompts: PromptStore, term
       const cc = settings.get().claudeCode
       const s =
         use.account === 'anthropic'
-          ? await term.create({ cwd: use.cwd, account: 'anthropic', model: use.model ?? cc.anthropic.model, allModels: false, title: use.title })
+          ? await term.create({ cwd: use.cwd, account: 'anthropic', anthropicId: use.anthropicId, model: use.model ?? anthropicAccount(use.anthropicId).model, allModels: false, title: use.title })
           : await term.create({ cwd: use.cwd, model: use.model || cc.model, allModels: use.allModels ?? cc.allModels, title: use.title })
       queue.add(s.id, p.text, { source, note })
       result = s.id

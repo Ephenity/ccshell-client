@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import type { ClaudeAccount, HistoryItem, HistoryMessage } from '../../shared/terminal'
+import { anthropicAccounts } from '../anthropic'
 import { configDir } from './claude'
 
 interface Parsed {
@@ -12,18 +13,27 @@ const cache = new Map<string, { mtime: number; size: number; parsed: Parsed }>()
 
 const ID_RE = /^[0-9a-f-]{36}$/i
 
-function projectsDir(account: ClaudeAccount): string {
-  return join(configDir(account), 'projects')
+function projectsDir(account: ClaudeAccount, anthropicId?: string): string {
+  return join(configDir(account, anthropicId), 'projects')
 }
 
-function accountOf(file: string): ClaudeAccount {
-  return file.toLowerCase().startsWith(projectsDir('anthropic').toLowerCase()) ? 'anthropic' : 'ccshell'
+function roots(): { account: ClaudeAccount; anthropicId?: string; dir: string }[] {
+  return [
+    { account: 'ccshell' as const, dir: projectsDir('ccshell') },
+    ...anthropicAccounts().map((a) => ({ account: 'anthropic' as const, anthropicId: a.id, dir: projectsDir('anthropic', a.id) }))
+  ]
+}
+
+function accountOf(file: string): { account?: ClaudeAccount; anthropicId?: string } {
+  const f = file.toLowerCase()
+  for (const r of roots().sort((a, b) => b.dir.length - a.dir.length))
+    if (r.account === 'anthropic' && f.startsWith(r.dir.toLowerCase())) return { account: 'anthropic', anthropicId: r.anthropicId }
+  return {}
 }
 
 function files(): string[] {
   const out: string[] = []
-  for (const account of ['ccshell', 'anthropic'] as const) {
-    const root = projectsDir(account)
+  for (const { dir: root } of roots()) {
     let dirs: string[] = []
     try {
       dirs = readdirSync(root)
@@ -147,7 +157,7 @@ export function listHistory(): Omit<HistoryItem, 'openIn'>[] {
   const out: Omit<HistoryItem, 'openIn'>[] = []
   for (const f of files()) {
     const p = load(f)
-    if (p && p.item.messages > 0) out.push({ ...p.item, account: accountOf(f) === 'anthropic' ? 'anthropic' : undefined })
+    if (p && p.item.messages > 0) out.push({ ...p.item, ...accountOf(f) })
   }
   return out.sort((a, b) => b.updatedAt - a.updatedAt)
 }
@@ -172,7 +182,7 @@ export function historyItem(id: string): Omit<HistoryItem, 'openIn'> | null {
   try {
     const f = fileOf(id)
     const item = load(f)?.item
-    return item ? { ...item, account: accountOf(f) === 'anthropic' ? 'anthropic' : undefined } : null
+    return item ? { ...item, ...accountOf(f) } : null
   } catch {
     return null
   }

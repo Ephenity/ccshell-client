@@ -11,7 +11,8 @@ import { PERMISSION_MODES, type AppSettings } from '../../shared/settings'
 import type { ClaudeState, FavoriteConversation, HistoryItem, Notice, TerminalData, TerminalInfo, TerminalOptions, TerminalSession } from '../../shared/terminal'
 import { log } from '../log'
 import { anthropicEnv, assertNoAccountLogin, claudeVersion, configDir, findClaude, findSystemClaude, launchEnv, ownInstallDir, prepareConfig } from './claude'
-import { anthropicApiKey } from '../anthropic'
+import { anthropicAccount, anthropicApiKey, currentAnthropicId, setCurrentAnthropicId, updateAnthropicAccount } from '../anthropic'
+import { DEFAULT_ANTHROPIC_ID } from '../../shared/anthropic'
 import { deleteHistory, historyExists, historyItem, listHistory } from './history'
 import { HookServer, type HookEvent } from './hooks'
 import { hostClient, HostClient, type RemotePty } from './hostClient'
@@ -260,7 +261,7 @@ export class TerminalService extends EventEmitter<{ list: [TerminalSession[]]; d
 
   private saveRecords(): void {
     const records = [...this.sessions.values()]
-      .map(({ info: { id, title, cwd, model, account, createdAt, conversationId, exitCode, openedBy } }) => ({ id, title, cwd, model, account, createdAt, conversationId, exitCode, openedBy }))
+      .map(({ info: { id, title, cwd, model, account, anthropicId, createdAt, conversationId, exitCode, openedBy } }) => ({ id, title, cwd, model, account, anthropicId, createdAt, conversationId, exitCode, openedBy }))
       .slice(-RECORDS_MAX)
     this.save({ records })
   }
@@ -268,8 +269,12 @@ export class TerminalService extends EventEmitter<{ list: [TerminalSession[]]; d
   private remember(o: TerminalOptions): void {
     const s = this.saved()
     this.save({ recentDirs: [o.cwd, ...s.recentDirs.filter((d) => !sameDir(d, o.cwd))].slice(0, RECENT_MAX) })
-    if (o.account === 'anthropic') settings.update({ claudeCode: { account: 'anthropic', anthropic: { model: o.model } } })
-    else settings.update({ claudeCode: { account: 'ccshell', model: o.model, allModels: o.allModels } })
+    if (o.account === 'anthropic') {
+      const id = o.anthropicId || currentAnthropicId()
+      settings.update({ claudeCode: { account: 'anthropic' } })
+      setCurrentAnthropicId(id)
+      updateAnthropicAccount(id, { model: o.model })
+    } else settings.update({ claudeCode: { account: 'ccshell', model: o.model, allModels: o.allModels } })
   }
 
   async info(): Promise<TerminalInfo> {
@@ -287,7 +292,7 @@ export class TerminalService extends EventEmitter<{ list: [TerminalSession[]]; d
       pinnedDirs: pinned,
       recentDirs: uniq(s.recentDirs).filter((d) => !pinned.some((p) => sameDir(p, d))),
       favorites: s.favorites,
-      lastOptions: { model: cc.model, allModels: cc.allModels, account: cc.account }
+      lastOptions: { model: cc.model, allModels: cc.allModels, account: cc.account, anthropicId: currentAnthropicId() }
     }
   }
 
@@ -352,14 +357,21 @@ export class TerminalService extends EventEmitter<{ list: [TerminalSession[]]; d
     const cwd = raw ? resolve(raw) : ''
     if (!cwd || !existsSync(cwd) || !statSync(cwd).isDirectory()) throw new Error(`工作目录不存在：${cwd || '（空）'}`)
     if (/^[a-z]:\\?$/i.test(cwd)) throw new Error('不能使用盘符根目录作为工作目录，请选择项目文件夹')
-    const acct = options.resumeId ? (historyItem(options.resumeId)?.account ?? 'ccshell') : (options.account ?? 'ccshell')
+    const hist = options.resumeId ? historyItem(options.resumeId) : null
+    const acct = options.resumeId ? (hist?.account ?? 'ccshell') : (options.account ?? 'ccshell')
+    const anthropicId =
+      acct === 'anthropic'
+        ? anthropicAccount(options.resumeId ? (hist?.anthropicId ?? DEFAULT_ANTHROPIC_ID) : options.anthropicId || currentAnthropicId()).id
+        : undefined
+    const model = anthropicId && options.account !== 'anthropic' ? anthropicAccount(anthropicId).model : options.model
     const live = newLive(
       {
         id: randomUUID(),
         title: options.title?.trim() || basename(cwd) || cwd,
         cwd,
-        model: acct === 'anthropic' && options.account !== 'anthropic' ? settings.get().claudeCode.anthropic.model : options.model,
+        model,
         account: acct === 'anthropic' ? 'anthropic' : undefined,
+        anthropicId,
         createdAt: Date.now(),
         status: 'exited',
         state: 'starting',
@@ -367,7 +379,7 @@ export class TerminalService extends EventEmitter<{ list: [TerminalSession[]]; d
         conversationId: options.resumeId,
         openedBy: options.openedBy
       },
-      { ...options, cwd, account: acct, model: acct === 'anthropic' && options.account !== 'anthropic' ? settings.get().claudeCode.anthropic.model : options.model }
+      { ...options, cwd, account: acct, anthropicId, model }
     )
     await this.spawn(live, options.resumeId ? { resume: options.resumeId } : options.continueLast ? { continue: true } : {})
     this.sessions.set(live.info.id, live)
@@ -387,7 +399,7 @@ export class TerminalService extends EventEmitter<{ list: [TerminalSession[]]; d
     }
     const resume = conv && historyExists(conv) ? conv : undefined
     const cc = settings.get().claudeCode
-    const model = live.info.account === 'anthropic' ? cc.anthropic.model : cc.model
+    const model = live.info.account === 'anthropic' ? anthropicAccount(live.info.anthropicId ?? DEFAULT_ANTHROPIC_ID).model : cc.model
     live.options = { ...live.options, model, allModels: cc.allModels }
     live.info = { ...live.info, model, restored: false }
     this.push(live, `\r\n\x1b[2m—— 重新启动，${resume ? '继续此对话' : '继续此目录最近的对话'} ——\x1b[0m\r\n`)
@@ -402,13 +414,15 @@ export class TerminalService extends EventEmitter<{ list: [TerminalSession[]]; d
     const hook = { session: live.info.id }
     const { path } = findClaude()
     let env: Record<string, string>
+    let accountLabel = 'CC Shell 账户'
     if (live.info.account === 'anthropic') {
-      const method = cc.anthropic.method
-      const key = method === 'apikey' ? anthropicApiKey() : null
-      if (method === 'apikey' && !key) throw new Error('尚未设置 Anthropic API 密钥，请在 设置 › Anthropic 账户 中填写')
+      const acc = anthropicAccount(live.info.anthropicId ?? DEFAULT_ANTHROPIC_ID)
+      const key = acc.method === 'apikey' ? anthropicApiKey(acc.id) : null
+      if (acc.method === 'apikey' && !key) throw new Error(`Anthropic 账户“${acc.name}”还没有设置 API 密钥，请在 设置 › Anthropic 账户 中填写`)
       if (!path) throw new Error('未找到 Claude Code（claude.exe），可在设置中安装')
-      prepareConfig(live.options.cwd, await claudeVersion(path), 'anthropic', key ?? undefined)
-      env = anthropicEnv({ method, apiKey: key ?? undefined, model: live.options.model, hook })
+      prepareConfig(live.options.cwd, await claudeVersion(path), 'anthropic', { apiKey: key ?? undefined, anthropicId: acc.id })
+      env = anthropicEnv({ accountId: acc.id, method: acc.method, apiKey: key ?? undefined, model: live.options.model, hook })
+      accountLabel = `Anthropic 账户 ${acc.name}（${acc.method === 'apikey' ? 'API 密钥' : '订阅'}）`
     } else {
       const apiKey = this.ccshell.getApiKey()
       if (!apiKey) throw new Error('尚无 CC Shell 密钥，请先登录账户')
@@ -438,7 +452,7 @@ export class TerminalService extends EventEmitter<{ list: [TerminalSession[]]; d
     live.outputAt = Date.now()
     live.info = { ...live.info, status: 'running', exitCode: undefined, stuck: false, continuing: false, activity: undefined, busySince: undefined }
     this.setState(live, 'starting')
-    log('会话', `开始 ${live.info.title}（${live.options.cwd}）${live.info.account === 'anthropic' ? `Anthropic 账户（${cc.anthropic.method === 'apikey' ? 'API 密钥' : '订阅'}）` : 'CC Shell 账户'} 模型 ${live.options.model || '默认'}，${mode.resume ? `--resume ${mode.resume}` : mode.continue ? '--continue' : '新对话'}；${path}`)
+    log('会话', `开始 ${live.info.title}（${live.options.cwd}）${accountLabel} 模型 ${live.options.model || '默认'}，${mode.resume ? `--resume ${mode.resume}` : mode.continue ? '--continue' : '新对话'}；${path}`)
     if (live.hookTimer) clearTimeout(live.hookTimer)
     live.hookTimer = setTimeout(() => {
       if (live.proc === proc && !live.gotHook && live.info.state === 'starting') {

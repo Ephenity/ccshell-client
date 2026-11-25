@@ -41,6 +41,8 @@ interface Page<T> {
 
 const AUTH_PATHS = ['/sign-in', '/sign-up', '/forgot-password', '/reset-password']
 
+const RESTORE_DELAYS = [1500, 4000, 0]
+
 export class CcShellService extends EventEmitter<{ changed: [AccountState] }> {
   private readonly ses: Session = session.fromPartition('persist:ccshell')
   private baseUrl = loadConfig().baseUrl
@@ -53,15 +55,43 @@ export class CcShellService extends EventEmitter<{ changed: [AccountState] }> {
   private refreshing: Promise<boolean> | null = null
   private pendingVerification: { flowToken: string; expiresAt: number } | null = null
   private statusCache: { at: number; value: RawStatus } | null = null
+  private signedOut = false
 
   async init(): Promise<void> {
     this.secrets = loadSecrets()
-    try {
-      if (await this.refresh()) await this.loadSelf()
-    } catch {
+    for (let i = 0; i < RESTORE_DELAYS.length; i++) {
+      try {
+        if (await this.refresh()) await this.loadSelf()
+        break
+      } catch (e) {
+        const reason = e instanceof ApiError ? (e.status ? `HTTP ${e.status}` : e.message) : String(e)
+        const wait = RESTORE_DELAYS[i]
+        log('账号', `启动时恢复登录失败（${reason}）${wait ? `，${wait / 1000} 秒后重试` : '，稍后自动重试'}`)
+        if (!wait) break
+        await new Promise((r) => setTimeout(r, wait))
+      }
     }
     this.restoring = false
     this.emitChanged()
+  }
+
+  async recover(): Promise<boolean> {
+    if (this.user || this.signedOut || this.restoring) return false
+    try {
+      if (!(await this.refresh())) return false
+      await this.loadSelf()
+      log('账号', '已自动恢复登录')
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  async flushCookies(): Promise<void> {
+    try {
+      await Promise.race([this.ses.cookies.flushStore(), new Promise((r) => setTimeout(r, 2000))])
+    } catch {
+    }
   }
 
   state(): AccountState {
@@ -97,6 +127,7 @@ export class CcShellService extends EventEmitter<{ changed: [AccountState] }> {
   async setBaseUrl(input: string): Promise<void> {
     const url = normalizeBaseUrl(input)
     if (url === this.baseUrl) return
+    this.signedOut = true
     await this.clearLocal()
     this.baseUrl = url
     this.statusCache = null
@@ -105,6 +136,7 @@ export class CcShellService extends EventEmitter<{ changed: [AccountState] }> {
   }
 
   async loginMode(): Promise<'password' | 'web'> {
+    await this.recover()
     return (await this.getStatus(true)).turnstile_check ? 'web' : 'password'
   }
 
@@ -213,6 +245,7 @@ export class CcShellService extends EventEmitter<{ changed: [AccountState] }> {
     try {
       await this.publicRequest('/api/user/auth/logout', { method: 'POST', body: {}, headers: this.sessionHeader() })
     } catch {}
+    this.signedOut = true
     await this.clearLocal()
     this.emitChanged()
   }
@@ -263,7 +296,9 @@ export class CcShellService extends EventEmitter<{ changed: [AccountState] }> {
 
   startBalanceTimer(ms = Number(testEnv('CCSHELL_BALANCE_MS')) || 5 * 60_000): () => void {
     const timer = setInterval(() => {
-      if (this.user && !this.restoring) void this.refreshBalance().catch(() => {})
+      if (this.restoring) return
+      if (this.user) void this.refreshBalance().catch(() => {})
+      else void this.recover()
     }, ms)
     return () => clearInterval(timer)
   }
@@ -319,6 +354,8 @@ export class CcShellService extends EventEmitter<{ changed: [AccountState] }> {
   }
 
   private async afterLogin(): Promise<void> {
+    this.signedOut = false
+    await this.flushCookies()
     await this.loadSelf()
     try {
       await this.ensureKey()
@@ -351,26 +388,38 @@ export class CcShellService extends EventEmitter<{ changed: [AccountState] }> {
   private refresh(): Promise<boolean> {
     this.refreshing ??= (async () => {
       try {
-        const bundle = await this.publicRequest<AuthBundle>('/api/user/auth/refresh', {
-          method: 'POST',
-          body: {},
-          headers: this.sessionHeader()
-        })
-        if (!bundle?.access_token) return false
-        this.applyBundle(bundle)
-        return true
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 401) {
-          this.accessToken = ''
-          this.dropSid()
-          return false
-        }
-        throw e
+        return await this.refreshOnce()
       } finally {
         this.refreshing = null
       }
     })()
     return this.refreshing
+  }
+
+  private async refreshOnce(): Promise<boolean> {
+    for (let attempt = 0; ; attempt++) {
+      const withSid = attempt === 0 && !!this.secrets.sid
+      try {
+        const bundle = await this.publicRequest<AuthBundle>('/api/user/auth/refresh', {
+          method: 'POST',
+          body: {},
+          headers: withSid ? this.sessionHeader() : {}
+        })
+        if (!bundle?.access_token) return false
+        this.applyBundle(bundle)
+        void this.flushCookies()
+        if (attempt > 0) log('账号', '去掉本机会话号后续期成功')
+        return true
+      } catch (e) {
+        const status = e instanceof ApiError ? e.status : 0
+        if (status !== 401 && status !== 409) throw e
+        log('账号', `续期被拒（HTTP ${status}${withSid ? '，带本机会话号' : ''}）`)
+        this.dropSid()
+        if (withSid) continue
+        this.accessToken = ''
+        return false
+      }
+    }
   }
 
   private async authed<T>(path: string, opts: RequestOptions = {}): Promise<T> {
@@ -386,7 +435,11 @@ export class CcShellService extends EventEmitter<{ changed: [AccountState] }> {
 
   private async ensureFresh(): Promise<void> {
     if (await this.refresh()) return
-    await this.clearLocal({ keepKey: true })
+    this.accessToken = ''
+    this.accessExpiresAt = 0
+    this.user = null
+    this.balance = null
+    this.pendingVerification = null
     this.emitChanged()
     throw new ApiError('登录已失效，请重新登录', 401, 'auth-required')
   }
@@ -450,16 +503,14 @@ export class CcShellService extends EventEmitter<{ changed: [AccountState] }> {
     return all
   }
 
-  private async clearLocal({ keepKey = false } = {}): Promise<void> {
+  private async clearLocal(): Promise<void> {
     this.accessToken = ''
     this.accessExpiresAt = 0
     this.user = null
     this.balance = null
     this.pendingVerification = null
-    const apiKey = keepKey ? this.secrets.apiKey : undefined
-    this.secrets = apiKey ? { apiKey } : {}
-    if (apiKey) saveSecrets(this.secrets)
-    else clearSecrets()
+    this.secrets = {}
+    clearSecrets()
     await this.ses.clearStorageData()
   }
 

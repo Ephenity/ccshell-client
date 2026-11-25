@@ -24,5 +24,5 @@ export const PLACEHOLDER_HELP = '{date} 今天的日期 · {time} 现在的时�
 export type PromptUse =
   | { action: 'insert'; sessionId: string }
   | { action: 'queue'; sessionId: string }
-  | { action: 'new'; cwd: string; title?: string; model?: string; allModels?: boolean; account?: ClaudeAccount }
+  | { action: 'new'; cwd: string; title?: string; model?: string; allModels?: boolean; account?: ClaudeAccount; anthropicId?: string }
   | { action: 'copy'; sessionId?: string }

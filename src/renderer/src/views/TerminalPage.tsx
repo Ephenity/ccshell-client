@@ -9,6 +9,7 @@ import type { CodeRequest } from '../App'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { FavoriteConversation, TerminalInfo, TerminalSession } from '../../../shared/terminal'
 import { HistoryView } from '../terminal/HistoryView'
+import { anthropicLabel, useAnthropicNames } from '../terminal/anthropicNames'
 import { Launcher } from '../terminal/Launcher'
 import { dirName, STATE_STYLE, stateText, useSettings } from '../terminal/state'
 import { disposeTerminal, enableGpu, getTerminal, setTerminalTheme } from '../terminal/xterm'
@@ -332,6 +333,7 @@ function SessionRow(props: {
   onRemove: () => void
 }) {
   const s = props.session
+  const anthNames = useAnthropicNames()
   return (
     <div
       role="button"
@@ -368,7 +370,7 @@ function SessionRow(props: {
         )}
         <span className="block truncate text-[11px] text-text-3" title={s.cwd}>
           {stateText(s)}
-          {s.stateDetail && s.state !== 'exited' ? ` · ${s.stateDetail}` : ''} · {s.account === 'anthropic' && 'Anthropic · '}
+          {s.stateDetail && s.state !== 'exited' ? ` · ${s.stateDetail}` : ''} · {s.account === 'anthropic' && `${anthropicLabel(anthNames, s.anthropicId)} · `}
           <span className="font-mono">{s.model || '默认模型'}</span>
         </span>
         {s.popout && !s.detached && s.status === 'running' && (
@@ -483,6 +485,7 @@ export function SessionView(props: {
   onOpenPrompts: () => void
   onOpenSession: (id: string) => void
 }) {
+  const anthNames = useAnthropicNames()
   const { session, queue } = props
   const [editing, setEditing] = useState(false)
   const [picker, setPicker] = useState(false)
@@ -523,8 +526,8 @@ export function SessionView(props: {
             </span>
             <span className="text-border-strong">·</span>
             {session.account === 'anthropic' && (
-              <span className="shrink-0 rounded-full border border-border px-1.5 text-[10.5px] text-text-2" title="使用 Anthropic 账户（独立配置目录）">
-                Anthropic
+              <span className="shrink-0 rounded-full border border-border px-1.5 text-[10.5px] text-text-2" title="使用 Anthropic 账户（每个账户一个配置目录）">
+                {anthropicLabel(anthNames, session.anthropicId)}
               </span>
             )}
             <span className="shrink-0 font-mono">{session.model || '默认模型'}</span>

@@ -52,7 +52,7 @@ export const ACCOUNT_GROUPS: { title: string; items: { id: AccountPane; label: s
     title: '设置',
     items: [
       { id: 'claude-code', label: 'Claude Code', icon: SquareTerminal, description: '安装、更新、模型和启动参数' },
-      { id: 'anthropic', label: 'Anthropic 账户', icon: KeyRound, description: '用订阅账户或 API 密钥运行 Claude Code' },
+      { id: 'anthropic', label: 'Anthropic 账户', icon: KeyRound, description: '管理用于 Claude Code 的 Anthropic 账户（可多个）' },
       { id: 'appearance', label: '外观与启动', icon: Brush, description: '主题、开机启动、托盘、悬浮窗与快捷键' },
       { id: 'notify', label: '通知与队列', icon: BellRing, description: '桌面通知、停滞提醒与队列自动继续' },
       { id: 'network', label: '网络', icon: Globe, description: 'npm 源与代理' }

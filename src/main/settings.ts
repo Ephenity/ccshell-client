@@ -2,7 +2,27 @@ import { EventEmitter } from 'node:events'
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
+import { ANTHROPIC_MAX, type AnthropicAccount } from '../shared/anthropic'
 import { defaultSettings, REGISTRIES, type AppSettings, type SettingsPatch } from '../shared/settings'
+
+function cleanAccounts(list: unknown): AnthropicAccount[] {
+  const seen = new Set<string>()
+  const out: AnthropicAccount[] = []
+  for (const a of Array.isArray(list) ? (list as Partial<AnthropicAccount>[]) : []) {
+    const id = typeof a?.id === 'string' ? a.id.trim() : ''
+    if (!/^[a-z0-9-]{1,32}$/.test(id) || seen.has(id)) continue
+    seen.add(id)
+    out.push({
+      id,
+      name: (typeof a.name === 'string' ? a.name : '').trim().slice(0, 40) || id,
+      method: a.method === 'apikey' ? 'apikey' : 'subscription',
+      model: (typeof a.model === 'string' ? a.model : '').trim().slice(0, 80),
+      createdAt: Number(a.createdAt) || Date.now()
+    })
+    if (out.length >= ANTHROPIC_MAX) break
+  }
+  return out
+}
 
 class SettingsStore extends EventEmitter<{ changed: [AppSettings] }> {
   private cache: AppSettings | null = null
@@ -23,7 +43,8 @@ class SettingsStore extends EventEmitter<{ changed: [AppSettings] }> {
         ...d.claudeCode,
         ...raw.claudeCode,
         modelMap: { ...d.claudeCode.modelMap, ...raw.claudeCode?.modelMap },
-        anthropic: { ...d.claudeCode.anthropic, ...raw.claudeCode?.anthropic }
+        anthropic: { ...d.claudeCode.anthropic, ...raw.claudeCode?.anthropic },
+        anthropicAccounts: cleanAccounts(raw.claudeCode?.anthropicAccounts)
       },
       appearance: { ...d.appearance, ...raw.appearance },
       network: { ...d.network, ...raw.network },
@@ -46,7 +67,8 @@ class SettingsStore extends EventEmitter<{ changed: [AppSettings] }> {
         ...cur.claudeCode,
         ...patch.claudeCode,
         modelMap: { ...cur.claudeCode.modelMap, ...patch.claudeCode?.modelMap },
-        anthropic: { ...cur.claudeCode.anthropic, ...patch.claudeCode?.anthropic }
+        anthropic: { ...cur.claudeCode.anthropic, ...patch.claudeCode?.anthropic },
+        anthropicAccounts: cleanAccounts(patch.claudeCode?.anthropicAccounts ?? cur.claudeCode.anthropicAccounts)
       },
       appearance: { ...cur.appearance, ...patch.appearance },
       network: { ...cur.network, ...patch.network },

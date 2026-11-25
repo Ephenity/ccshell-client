@@ -7,7 +7,7 @@ const now = () => Math.floor(Date.now() / 1000)
 const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
 const KID = 'mock-k1'
 let turnstile = false
-let authMock = { spa: false, sidStrict: false }
+let authMock = { spa: false, sidStrict: false, sidConflict: false, refreshFail: 0 }
 
 const users = {
   user: { id: 1, username: 'user', password: 'user', display_name: process.env.MOCK_DISPLAY_NAME || '测试用户', email: 'user@example.com', group: 'default', quota: 12_345_678, used_quota: 2_500_000, request_count: 321, twofa: false },
@@ -186,10 +186,15 @@ const server = createServer(async (req, res) => {
     if (m === 'POST' && path.startsWith('/api/user/auth/') && req.headers.origin !== `http://127.0.0.1:${port}`)
       return fail(res, 403, '')
     if (m === 'POST' && path === '/api/user/auth/refresh') {
+      if (authMock.refreshFail > 0) {
+        authMock = { ...authMock, refreshFail: authMock.refreshFail - 1 }
+        return fail(res, 503, 'Service Unavailable')
+      }
       const r = refresh.get(cookies(req).ccshell_refresh)
       if (!r) return fail(res, 401, 'Unauthorized')
       const hs = req.headers['x-auth-session']
-      if (authMock.sidStrict && hs && hs !== r.sid) return fail(res, 401, 'Unauthorized')
+      if ((authMock.sidStrict || authMock.sidConflict) && hs && hs !== r.sid)
+        return fail(res, authMock.sidConflict ? 409 : 401, authMock.sidConflict ? 'Session conflict' : 'Unauthorized')
       refresh.delete(cookies(req).ccshell_refresh)
       return issue(res, r.userId, r.sid)
     }
